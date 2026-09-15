@@ -1,0 +1,151 @@
+version: 2
+
+models:
+  - name: dim_region
+    description: The 18 regions reported by the Carbon Intensity API. 1-14 are DNO licence areas with a representative point; 15-18 are aggregates.
+    columns:
+      - name: region_id
+        tests: [unique, not_null]
+      - name: region_name
+        tests: [unique, not_null]
+      - name: nation
+        tests:
+          - accepted_values:
+              values: [England, Scotland, Wales, GB]
+
+  - name: dim_fuel
+    description: Fuel types in the generation mix with their grouping.
+    columns:
+      - name: fuel
+        tests: [unique, not_null]
+      - name: fuel_group
+        tests:
+          - accepted_values:
+              values: [renewable, low_carbon, fossil, imports, other]
+
+  - name: dim_fuel_factors
+    description: dim_fuel joined to the latest ESO emission factor.
+    columns:
+      - name: fuel
+        tests: [unique, not_null]
+      - name: emission_factor_gco2_kwh
+        tests:
+          - value_between: { min_value: 0, max_value: 1500 }
+
+  - name: dim_date
+    columns:
+      - name: date_day
+        tests: [unique, not_null]
+      - name: season
+        tests:
+          - accepted_values:
+              values: [winter, spring, summer, autumn]
+
+  - name: fct_intensity_national_halfhourly
+    description: One row per half-hour settlement period, GB-wide.
+    tests:
+      - row_count_at_least: { minimum: 48 }
+    columns:
+      - name: period_start
+        tests: [unique, not_null]
+      - name: settlement_period
+        tests:
+          - not_null
+          - value_between: { min_value: 1, max_value: 48 }
+      - name: forecast_gco2_kwh
+        tests:
+          - value_between: { min_value: 0, max_value: 1500 }
+      - name: actual_gco2_kwh
+        tests:
+          - value_between: { min_value: 0, max_value: 1500 }
+      - name: renewable_pct
+        tests:
+          - value_between: { min_value: 0, max_value: 100 }
+      - name: intensity_index
+        tests:
+          - accepted_values:
+              values: ["very low", "low", "moderate", "high", "very high"]
+      - name: date_day
+        tests:
+          - relationships:
+              to: ref('dim_date')
+              field: date_day
+
+  - name: fct_intensity_regional_halfhourly
+    description: One row per region per half-hour with generation mix and interpolated weather.
+    tests:
+      - row_count_at_least: { minimum: 48 }
+    columns:
+      - name: period_start
+        tests: [not_null]
+      - name: region_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_region')
+              field: region_id
+      - name: forecast_gco2_kwh
+        tests:
+          - value_between: { min_value: 0, max_value: 1500 }
+      - name: wind_speed_100m_ms
+        tests:
+          - value_between: { min_value: 0, max_value: 100 }
+      - name: weather_method
+        tests:
+          - accepted_values:
+              values: [observed, interpolated, carried_forward]
+
+  - name: agg_daily_national
+    columns:
+      - name: date_day
+        tests: [unique, not_null]
+      - name: periods
+        tests:
+          - value_between: { min_value: 1, max_value: 48 }
+      - name: forecast_mae_gco2_kwh
+        tests:
+          - value_between: { min_value: 0, max_value: 500 }
+
+  - name: agg_daily_regional
+    columns:
+      - name: region_id
+        tests: [not_null]
+      - name: mean_renewable_pct
+        tests:
+          - value_between: { min_value: 0, max_value: 100 }
+
+  - name: agg_forecast_accuracy_by_settlement_period
+    columns:
+      - name: settlement_period
+        tests: [unique, not_null]
+
+  - name: agg_hour_of_day_regional
+    columns:
+      - name: hour_of_day_utc
+        tests:
+          - value_between: { min_value: 0, max_value: 23 }
+      - name: cleanliness_rank
+        tests:
+          - value_between: { min_value: 1, max_value: 24 }
+
+  - name: agg_wind_speed_bins_regional
+    columns:
+      - name: mean_wind_pct
+        tests:
+          - value_between: { min_value: 0, max_value: 100 }
+
+  - name: agg_weather_intensity_correlation
+    columns:
+      - name: region_id
+        tests: [unique, not_null]
+      - name: corr_wind_speed_vs_wind_pct
+        tests:
+          - value_between: { min_value: -1, max_value: 1 }
+
+  - name: data_quality_daily
+    columns:
+      - name: dataset
+        tests: [not_null]
+      - name: quarantine_rate_pct
+        tests:
+          - value_between: { min_value: 0, max_value: 100 }

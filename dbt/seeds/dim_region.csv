@@ -1,0 +1,19 @@
+region_id,region_name,dno_region,nation,latitude,longitude,is_aggregate,location_note
+1,North Scotland,Scottish Hydro Electric Power Distribution,Scotland,57.48,-4.22,false,Representative point near Inverness
+2,South Scotland,SP Distribution,Scotland,55.95,-3.78,false,Representative point between Glasgow and Edinburgh
+3,North West England,Electricity North West,England,53.48,-2.24,false,Representative point at Manchester
+4,North East England,Northern Powergrid North East,England,54.98,-1.61,false,Representative point at Newcastle upon Tyne
+5,Yorkshire,Northern Powergrid Yorkshire,England,53.80,-1.55,false,Representative point at Leeds
+6,North Wales & Merseyside,SP Manweb,Wales,53.19,-2.89,false,Representative point at Chester
+7,South Wales,WPD South Wales,Wales,51.48,-3.18,false,Representative point at Cardiff
+8,West Midlands,WPD West Midlands,England,52.48,-1.90,false,Representative point at Birmingham
+9,East Midlands,WPD East Midlands,England,52.95,-1.15,false,Representative point at Nottingham
+10,East England,UK Power Networks Eastern,England,52.21,0.12,false,Representative point at Cambridge
+11,South West England,WPD South West,England,50.72,-3.53,false,Representative point at Exeter
+12,South England,Southern Electric Power Distribution,England,50.91,-1.40,false,Representative point at Southampton
+13,London,UK Power Networks London,England,51.51,-0.13,false,Representative point at central London
+14,South East England,UK Power Networks South Eastern,England,51.27,0.52,false,Representative point at Maidstone
+15,England,,England,,,true,Aggregate reported by the API; not geocoded
+16,Scotland,,Scotland,,,true,Aggregate reported by the API; not geocoded
+17,Wales,,Wales,,,true,Aggregate reported by the API; not geocoded
+18,GB,,GB,,,true,Aggregate reported by the API; not geocoded

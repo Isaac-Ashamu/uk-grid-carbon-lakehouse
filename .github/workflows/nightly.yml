@@ -1,0 +1,61 @@
+# Production-style scheduled run against the live APIs: yesterday's partition
+# end to end (bronze -> silver -> dbt build + tests -> quality gate), with the
+# lake and audit trail uploaded as artifacts. Fails loudly if either upstream
+# API changes shape or a day arrives thin.
+name: nightly-live-run
+
+on:
+  schedule:
+    - cron: "30 6 * * *"   # 06:30 UTC, after ESO actuals and the Open-Meteo archive settle
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "first day (YYYY-MM-DD); default = yesterday"
+        required: false
+      end:
+        description: "last day (YYYY-MM-DD); default = start"
+        required: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GRIDCARBON_LOG_JSON: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: uv pip install --system -e .
+      - name: Resolve window
+        id: window
+        run: |
+          START="${{ github.event.inputs.start }}"
+          END="${{ github.event.inputs.end }}"
+          [ -z "$START" ] && START=$(date -u -d 'yesterday' +%F)
+          [ -z "$END" ] && END="$START"
+          echo "start=$START" >> "$GITHUB_OUTPUT"; echo "end=$END" >> "$GITHUB_OUTPUT"
+      - run: gridcarbon reference
+      - run: gridcarbon backfill ${{ steps.window.outputs.start }} ${{ steps.window.outputs.end }} --no-load
+      - name: Quality gate
+        run: |
+          gridcarbon query "select date_day, dataset, transform_status, rows_out, rows_quarantined, quarantine_rate_pct, national_day_complete from marts.data_quality_daily order by 1,2"
+          python - <<'PY'
+          from gridcarbon import warehouse
+          f = warehouse.query("select * from marts.data_quality_daily where dataset <> 'carbon_factors'")
+          bad = f[(f.transform_status != 'succeeded') | (f.quarantine_rate_pct.fillna(0) > 5)]
+          assert bad.empty, bad.to_string()
+          assert f.national_day_complete.all(), f.to_string()
+          print("quality gate passed for", sorted(f.date_day.astype(str).unique()))
+          PY
+      - run: gridcarbon runs --last 30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lake-${{ steps.window.outputs.start }}
+          path: |
+            data/silver
+            data/audit
+            data/bronze/**/*.manifest.json
+          retention-days: 14

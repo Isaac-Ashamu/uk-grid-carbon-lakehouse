@@ -1,0 +1,44 @@
+name: gridcarbon
+version: "1.0.0"
+config-version: 2
+profile: gridcarbon
+require-dbt-version: ">=1.9.0"
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+analysis-paths: ["analyses"]
+
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  gridcarbon:
+    +persist_docs:
+      relation: true
+      columns: true
+    staging:
+      +materialized: view
+      +schema: staging
+    intermediate:
+      +materialized: view
+      +schema: intermediate
+    marts:
+      +materialized: table
+      +schema: marts
+
+seeds:
+  gridcarbon:
+    +schema: marts
+    dim_region:
+      +column_types:
+        region_id: integer
+        latitude: double
+        longitude: double
+        is_aggregate: boolean
+    dim_fuel:
+      +column_types:
+        is_renewable: boolean
+        is_low_carbon: boolean
+        is_fossil: boolean

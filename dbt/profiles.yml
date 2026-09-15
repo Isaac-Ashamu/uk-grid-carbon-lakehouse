@@ -1,0 +1,15 @@
+gridcarbon:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('GRIDCARBON_DUCKDB_PATH', '../data/warehouse/gridcarbon.duckdb') }}"
+      threads: 4
+      settings:
+        TimeZone: UTC
+    ci:
+      type: duckdb
+      path: "{{ env_var('GRIDCARBON_DUCKDB_PATH', '../data/warehouse/gridcarbon.duckdb') }}"
+      threads: 2
+      settings:
+        TimeZone: UTC

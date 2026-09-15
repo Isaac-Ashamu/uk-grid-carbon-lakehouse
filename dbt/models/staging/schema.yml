@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: stg_intensity_national
+    columns:
+      - name: period_start
+        tests: [unique, not_null]
+  - name: stg_intensity_regional
+    tests:
+      - unique:
+          column_name: "period_start || '-' || region_id"
+  - name: stg_generation_national
+    tests:
+      - unique:
+          column_name: "period_start || '-' || fuel"
+  - name: stg_generation_regional
+    tests:
+      - unique:
+          column_name: "period_start || '-' || region_id || '-' || fuel"
+  - name: stg_weather_hourly
+    tests:
+      - unique:
+          column_name: "region_id || '-' || observed_at"
+  - name: stg_carbon_factors
+    columns:
+      - name: fuel_label
+        tests: [unique, not_null]

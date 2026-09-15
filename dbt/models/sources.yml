@@ -1,0 +1,43 @@
+version: 2
+
+sources:
+  - name: silver
+    description: >
+      Validated, typed Parquet tables written by `gridcarbon transform`. Each is a
+      DuckDB view over Hive-partitioned Parquet (one directory per UTC day). Every
+      row carries lineage back to the exact bronze file it came from.
+    schema: silver
+    loaded_at_field: fetched_at
+    freshness:
+      warn_after: { count: 36, period: hour }
+      error_after: { count: 96, period: hour }
+    tables:
+      - name: intensity_national
+        description: GB-wide half-hourly carbon intensity, forecast and actual (gCO2/kWh).
+        columns:
+          - name: period_start
+            tests: [not_null]
+          - name: index
+            tests:
+              - accepted_values:
+                  values: ["very low", "low", "moderate", "high", "very high"]
+      - name: generation_national
+        description: GB-wide half-hourly generation mix, one row per fuel.
+      - name: intensity_regional
+        description: Half-hourly forecast intensity for 14 DNO regions and 4 aggregates.
+      - name: generation_regional
+        description: Half-hourly generation mix per region, one row per fuel.
+      - name: weather_hourly
+        description: ERA5 reanalysis hourly weather at each DNO region's representative point.
+      - name: carbon_factors
+        description: gCO2/kWh emission factor per fuel type, snapshotted whenever it is fetched.
+        freshness: null
+      - name: quarantine
+        description: Rows rejected by the silver contracts, with reason and original record.
+        freshness: null
+
+  - name: audit
+    schema: audit
+    tables:
+      - name: pipeline_runs
+        description: One row per pipeline stage execution (extract, transform, dbt_build, load).

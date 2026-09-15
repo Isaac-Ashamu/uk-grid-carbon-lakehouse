@@ -1,0 +1,10 @@
+fuel,fuel_group,is_renewable,is_low_carbon,is_fossil,factor_label
+wind,renewable,true,true,false,Wind
+solar,renewable,true,true,false,Solar
+hydro,renewable,true,true,false,Hydro
+biomass,renewable,true,true,false,Biomass
+nuclear,low_carbon,false,true,false,Nuclear
+gas,fossil,false,false,true,Gas (Combined Cycle)
+coal,fossil,false,false,true,Coal
+imports,imports,false,false,false,
+other,other,false,false,false,Other

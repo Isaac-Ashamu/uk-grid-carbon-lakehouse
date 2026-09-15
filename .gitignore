@@ -1,0 +1,35 @@
+# data lake (bronze/silver/warehouse/audit) is local state, never committed
+data/
+!data/.gitkeep
+
+# python
+.venv/
+.venv-airflow/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+coverage.xml
+htmlcov/
+
+# dbt
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+logs/
+
+# airflow (local scratch)
+airflow/logs/
+airflow/airflow.cfg
+airflow/webserver_config.py
+airflow/*.db
+
+# env
+.env
+.DS_Store
