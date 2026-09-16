@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+message: "If you use this project, please cite it as below."
+title: "uk-grid-carbon-lakehouse"
+authors:
+  - family-names: Ashamu
+    given-names: Isaac
+type: software
+license: MIT
+repository-code: "https://github.com/Isaac-Ashamu/uk-grid-carbon-lakehouse"
+date-released: 2026-09-16
+version: 0.1.0
+abstract: >-
+  Medallion lakehouse over the National Grid ESO Carbon Intensity API and
+  Open-Meteo: bronze, silver and gold layers on Parquet and DuckDB, dbt marts
+  with tests, Airflow orchestration, Postgres serving and a FastAPI read API.
