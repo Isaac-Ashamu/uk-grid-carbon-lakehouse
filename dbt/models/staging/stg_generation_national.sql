@@ -2,12 +2,12 @@
 
 with ranked as (
     select
-        period_start,
-        period_end,
+        period_start::timestamptz as period_start,
+        period_end::timestamptz as period_end,
         fuel,
         perc,
         partition_date::date as partition_date,
-        fetched_at,
+        fetched_at::timestamptz as fetched_at,
         row_number() over (partition by period_start, fuel order by fetched_at desc) as rn
     from {{ source('silver', 'generation_national') }}
 )

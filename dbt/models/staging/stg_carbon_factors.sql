@@ -6,7 +6,7 @@ with ranked as (
         fuel_label,
         gco2_per_kwh,
         partition_date::date as snapshot_date,
-        fetched_at,
+        fetched_at::timestamptz as fetched_at,
         row_number() over (partition by fuel_label order by fetched_at desc) as rn
     from {{ source('silver', 'carbon_factors') }}
 )
