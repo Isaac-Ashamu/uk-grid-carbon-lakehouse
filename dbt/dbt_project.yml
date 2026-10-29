@@ -31,6 +31,9 @@ models:
 seeds:
   gridcarbon:
     +schema: marts
+    +persist_docs:
+      relation: true
+      columns: true
     dim_region:
       +column_types:
         region_id: integer
