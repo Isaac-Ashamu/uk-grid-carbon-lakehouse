@@ -1,151 +1,529 @@
 version: 2
 
-models:
+# Conventions for every mart:
+# - Timestamps are UTC. A "day" (date_day) is a UTC calendar day.
+# - Carbon intensity is in gCO2/kWh. Generation mix columns (*_pct) are
+#   percentages of generation, 0-100.
+# - Settlement periods are numbered 1-48 from 00:00 UTC (period 1 = 00:00-00:30).
+# - Regional data has a forecast intensity only; the API publishes an actual
+#   (outturn) intensity for GB as a whole, so actual-vs-forecast questions
+#   use the national tables.
+
+# dim_region and dim_fuel are seeds (dbt/seeds/*.csv), so they are declared
+# under seeds:, not models:, for their docs and tests to apply.
+seeds:
   - name: dim_region
     description: The 18 regions reported by the Carbon Intensity API. 1-14 are DNO licence areas with a representative point; 15-18 are aggregates.
     columns:
       - name: region_id
+        description: Carbon Intensity API region id. 1-14 are DNO licence areas, 15 = England, 16 = Scotland, 17 = Wales, 18 = GB.
         tests: [unique, not_null]
       - name: region_name
+        description: Region name as published by the API, e.g. "North Scotland", "London", "GB".
         tests: [unique, not_null]
+      - name: dno_region
+        description: The distribution network operator licence area the region covers. Empty for the aggregate regions.
       - name: nation
+        description: The nation the region is in (England, Scotland or Wales), or GB for the GB-wide aggregate.
         tests:
           - accepted_values:
               values: [England, Scotland, Wales, GB]
+      - name: latitude
+        description: Latitude of the point used to fetch weather for the region. Null for the aggregate regions.
+      - name: longitude
+        description: Longitude of the point used to fetch weather for the region. Null for the aggregate regions.
+      - name: is_aggregate
+        description: True for regions 15-18 (England, Scotland, Wales, GB), which sum other regions and have no weather.
+      - name: location_note
+        description: Where the representative weather point sits, e.g. "Representative point near Inverness".
 
   - name: dim_fuel
     description: Fuel types in the generation mix with their grouping.
     columns:
       - name: fuel
+        description: Fuel name as used in the *_pct columns, e.g. wind, solar, gas, nuclear, imports.
         tests: [unique, not_null]
       - name: fuel_group
+        description: renewable (wind, solar, hydro, biomass), low_carbon (nuclear), fossil (gas, coal), imports or other.
         tests:
           - accepted_values:
               values: [renewable, low_carbon, fossil, imports, other]
+      - name: is_renewable
+        description: True for wind, solar, hydro and biomass.
+      - name: is_low_carbon
+        description: True for the renewables plus nuclear.
+      - name: is_fossil
+        description: True for gas and coal.
+      - name: factor_label
+        description: The fuel's label in the ESO emission factors feed, used to join dim_fuel_factors.
 
+models:
   - name: dim_fuel_factors
     description: dim_fuel joined to the latest ESO emission factor.
     columns:
       - name: fuel
+        description: Fuel name, as in dim_fuel.
         tests: [unique, not_null]
+      - name: fuel_group
+        description: Fuel group, as in dim_fuel.
+      - name: is_renewable
+        description: True for wind, solar, hydro and biomass.
+      - name: is_low_carbon
+        description: True for the renewables plus nuclear.
+      - name: is_fossil
+        description: True for gas and coal.
+      - name: factor_label
+        description: The fuel's label in the ESO emission factors feed.
       - name: emission_factor_gco2_kwh
+        description: Grams of CO2 emitted per kWh generated from this fuel, from the latest factors snapshot. Null for imports, which have no single factor.
         tests:
           - value_between: { min_value: 0, max_value: 1500 }
+      - name: factor_snapshot_date
+        description: Date of the emission factors snapshot the value comes from.
 
   - name: dim_date
+    description: One row per UTC calendar day in the loaded history.
     columns:
       - name: date_day
+        description: The UTC calendar day.
         tests: [unique, not_null]
+      - name: year
+        description: Calendar year.
+      - name: month
+        description: Month number, 1-12.
+      - name: day_of_month
+        description: Day of the month, 1-31.
+      - name: iso_day_of_week
+        description: ISO day of the week, 1 = Monday to 7 = Sunday.
+      - name: day_name
+        description: Day name, e.g. Monday.
+      - name: is_weekend
+        description: True on Saturday and Sunday.
+      - name: iso_week
+        description: ISO week number.
       - name: season
+        description: Meteorological season. winter = Dec-Feb, spring = Mar-May, summer = Jun-Aug, autumn = Sep-Nov.
         tests:
           - accepted_values:
               values: [winter, spring, summer, autumn]
 
   - name: fct_intensity_national_halfhourly
-    description: One row per half-hour settlement period, GB-wide.
+    description: One row per half-hour settlement period, GB-wide, with the day-ahead forecast, the actual (outturn) intensity, the forecast error and the generation mix. Use this table for actual intensity and forecast accuracy.
     tests:
       - row_count_at_least: { minimum: 48 }
     columns:
       - name: period_start
+        description: Start of the half-hour period (UTC).
         tests: [unique, not_null]
-      - name: settlement_period
-        tests:
-          - not_null
-          - value_between: { min_value: 1, max_value: 48 }
-      - name: forecast_gco2_kwh
-        tests:
-          - value_between: { min_value: 0, max_value: 1500 }
-      - name: actual_gco2_kwh
-        tests:
-          - value_between: { min_value: 0, max_value: 1500 }
-      - name: renewable_pct
-        tests:
-          - value_between: { min_value: 0, max_value: 100 }
-      - name: intensity_index
-        tests:
-          - accepted_values:
-              values: ["very low", "low", "moderate", "high", "very high"]
+      - name: period_end
+        description: End of the half-hour period (UTC), 30 minutes after period_start.
       - name: date_day
+        description: UTC calendar day of period_start. Joins to dim_date.
         tests:
           - relationships:
               to: ref('dim_date')
               field: date_day
+      - name: settlement_period
+        description: Half-hour number within the UTC day, 1-48 (1 = 00:00-00:30 UTC).
+        tests:
+          - not_null
+          - value_between: { min_value: 1, max_value: 48 }
+      - name: forecast_gco2_kwh
+        description: ESO's day-ahead forecast carbon intensity for the period, gCO2/kWh.
+        tests:
+          - value_between: { min_value: 0, max_value: 1500 }
+      - name: actual_gco2_kwh
+        description: The actual (outturn) carbon intensity for the period, gCO2/kWh.
+        tests:
+          - value_between: { min_value: 0, max_value: 1500 }
+      - name: intensity_index
+        description: The API's band for the forecast intensity.
+        tests:
+          - accepted_values:
+              values: ["very low", "low", "moderate", "high", "very high"]
+      - name: forecast_error_gco2_kwh
+        description: forecast_gco2_kwh minus actual_gco2_kwh. Positive means the forecast was too high (it over-estimated intensity).
+      - name: abs_forecast_error_gco2_kwh
+        description: Absolute forecast error, gCO2/kWh. Its mean is the MAE.
+      - name: forecast_error_pct
+        description: Forecast error as a percentage of the actual intensity. Null when the actual is 0.
+      - name: biomass_pct
+        description: Share of generation from biomass, %.
+      - name: coal_pct
+        description: Share of generation from coal, %.
+      - name: imports_pct
+        description: Share of supply from interconnector imports, %.
+      - name: gas_pct
+        description: Share of generation from gas, %.
+      - name: nuclear_pct
+        description: Share of generation from nuclear, %.
+      - name: other_pct
+        description: Share of generation from other sources, %.
+      - name: hydro_pct
+        description: Share of generation from hydro, %.
+      - name: solar_pct
+        description: Share of generation from solar, %.
+      - name: wind_pct
+        description: Share of generation from wind, %.
+      - name: renewable_pct
+        description: wind + solar + hydro + biomass, %.
+        tests:
+          - value_between: { min_value: 0, max_value: 100 }
+      - name: low_carbon_pct
+        description: renewable_pct + nuclear, %.
+      - name: fossil_pct
+        description: gas + coal, %.
+      - name: partition_date
+        description: Pipeline partition (UTC day) the row was loaded from. Lineage only.
+      - name: fetched_at
+        description: When the pipeline fetched the source data from the API (UTC). Lineage only.
+      - name: run_id
+        description: Id of the pipeline run that produced the row. Lineage only.
+      - name: bronze_sha256
+        description: SHA-256 of the raw API response the row was parsed from. Lineage only.
 
   - name: fct_intensity_regional_halfhourly
-    description: One row per region per half-hour with generation mix and interpolated weather.
+    description: One row per region per half-hour with the forecast intensity, the generation mix and the weather at the region's point. Regional data has no actual intensity; use the national fact for actuals. Weather is null for the aggregate regions 15-18.
     tests:
       - row_count_at_least: { minimum: 48 }
     columns:
       - name: period_start
+        description: Start of the half-hour period (UTC).
         tests: [not_null]
+      - name: period_end
+        description: End of the half-hour period (UTC).
+      - name: date_day
+        description: UTC calendar day of period_start. Joins to dim_date.
+      - name: settlement_period
+        description: Half-hour number within the UTC day, 1-48.
       - name: region_id
+        description: Region id. Joins to dim_region. Filter is_aggregate = false to compare the 14 DNO regions without double counting.
         tests:
           - not_null
           - relationships:
               to: ref('dim_region')
               field: region_id
+      - name: region_name
+        description: Region name, as in dim_region.
+      - name: nation
+        description: England, Scotland, Wales or GB.
+      - name: is_aggregate
+        description: True for regions 15-18 (England, Scotland, Wales, GB).
       - name: forecast_gco2_kwh
+        description: Forecast carbon intensity for the region and period, gCO2/kWh. The only intensity measure available regionally.
         tests:
           - value_between: { min_value: 0, max_value: 1500 }
+      - name: intensity_index
+        description: The API's band for the forecast intensity, from "very low" to "very high".
+      - name: biomass_pct
+        description: Share of the region's generation from biomass, %.
+      - name: coal_pct
+        description: Share of the region's generation from coal, %.
+      - name: imports_pct
+        description: Share of the region's supply from imports, %.
+      - name: gas_pct
+        description: Share of the region's generation from gas, %.
+      - name: nuclear_pct
+        description: Share of the region's generation from nuclear, %.
+      - name: other_pct
+        description: Share of the region's generation from other sources, %.
+      - name: hydro_pct
+        description: Share of the region's generation from hydro, %.
+      - name: solar_pct
+        description: Share of the region's generation from solar, %.
+      - name: wind_pct
+        description: Share of the region's generation from wind, %.
+      - name: renewable_pct
+        description: wind + solar + hydro + biomass, %.
+      - name: low_carbon_pct
+        description: renewable_pct + nuclear, %.
+      - name: fossil_pct
+        description: gas + coal, %.
+      - name: temperature_c
+        description: Air temperature at 2 m at the region's point, degrees C.
+      - name: wind_speed_10m_ms
+        description: Wind speed at 10 m at the region's point, m/s.
       - name: wind_speed_100m_ms
+        description: Wind speed at 100 m (turbine hub height) at the region's point, m/s. The better predictor of wind generation.
         tests:
           - value_between: { min_value: 0, max_value: 100 }
+      - name: shortwave_radiation_wm2
+        description: Incoming solar (shortwave) radiation at the region's point, W/m2. Drives solar generation.
+      - name: cloud_cover_pct
+        description: Total cloud cover at the region's point, %.
+      - name: precipitation_mm
+        description: Precipitation in the half hour, mm (the hourly total split evenly across its two half hours).
       - name: weather_method
+        description: How the half-hourly weather was derived from hourly data. observed = the hour's own value, interpolated = mean of this hour and the next, carried_forward = the next hour was missing.
         tests:
           - accepted_values:
               values: [observed, interpolated, carried_forward]
+      - name: partition_date
+        description: Pipeline partition (UTC day) the row was loaded from. Lineage only.
+      - name: fetched_at
+        description: When the pipeline fetched the source data (UTC). Lineage only.
+      - name: run_id
+        description: Id of the pipeline run that produced the row. Lineage only.
+      - name: bronze_sha256
+        description: SHA-256 of the raw API response. Lineage only.
 
   - name: agg_daily_national
+    description: One row per UTC day with GB-wide mean, min and max intensity, the cleanest and dirtiest half hours, forecast accuracy and the mean generation mix.
     columns:
       - name: date_day
+        description: The UTC calendar day.
         tests: [unique, not_null]
       - name: periods
+        description: Number of half-hour periods loaded for the day.
         tests:
           - value_between: { min_value: 1, max_value: 48 }
+      - name: is_complete_day
+        description: True when all 48 periods are present. The last day of a backfill is often incomplete, so filter on this for fair comparisons.
+      - name: periods_with_actual
+        description: Number of periods with an actual intensity.
+      - name: mean_forecast_gco2_kwh
+        description: Mean forecast intensity over the day, gCO2/kWh.
+      - name: mean_actual_gco2_kwh
+        description: Mean actual intensity over the day, gCO2/kWh. Use this for "how clean was the grid".
+      - name: min_actual_gco2_kwh
+        description: Lowest actual half-hourly intensity of the day, gCO2/kWh.
+      - name: max_actual_gco2_kwh
+        description: Highest actual half-hourly intensity of the day, gCO2/kWh.
+      - name: cleanest_period_start
+        description: Start (UTC) of the half hour with the lowest actual intensity.
+      - name: dirtiest_period_start
+        description: Start (UTC) of the half hour with the highest actual intensity.
       - name: forecast_mae_gco2_kwh
+        description: Mean absolute forecast error over the day, gCO2/kWh.
         tests:
           - value_between: { min_value: 0, max_value: 500 }
+      - name: forecast_bias_gco2_kwh
+        description: Mean signed forecast error (forecast minus actual), gCO2/kWh. Positive means the forecast ran high.
+      - name: forecast_mape_pct
+        description: Mean absolute forecast error as a percentage of the actual, %.
+      - name: forecast_rmse_gco2_kwh
+        description: Root mean squared forecast error, gCO2/kWh. Penalises large misses more than MAE.
+      - name: mean_renewable_pct
+        description: Mean renewable share over the day, %.
+      - name: mean_low_carbon_pct
+        description: Mean low-carbon share (renewables + nuclear) over the day, %.
+      - name: mean_fossil_pct
+        description: Mean fossil share (gas + coal) over the day, %.
+      - name: mean_wind_pct
+        description: Mean wind share over the day, %.
+      - name: mean_solar_pct
+        description: Mean solar share over the day, %.
+      - name: mean_gas_pct
+        description: Mean gas share over the day, %.
+      - name: mean_nuclear_pct
+        description: Mean nuclear share over the day, %.
+      - name: mean_imports_pct
+        description: Mean imports share over the day, %.
+      - name: last_fetched_at
+        description: Latest fetch time (UTC) among the day's rows. Use it to say how fresh the data is.
 
   - name: agg_daily_regional
+    description: One row per region per UTC day with the mean, min and max forecast intensity, the cleanest and dirtiest half hours, the mean generation mix and daily weather.
     columns:
+      - name: date_day
+        description: The UTC calendar day.
       - name: region_id
+        description: Region id. Joins to dim_region.
         tests: [not_null]
+      - name: region_name
+        description: Region name.
+      - name: nation
+        description: England, Scotland, Wales or GB.
+      - name: is_aggregate
+        description: True for regions 15-18. Filter it out to rank the 14 DNO regions.
+      - name: periods
+        description: Number of half-hour periods loaded for the region and day.
+      - name: is_complete_day
+        description: True when all 48 periods are present.
+      - name: mean_forecast_gco2_kwh
+        description: Mean forecast intensity over the day, gCO2/kWh. Use this to rank regions by how clean they were.
+      - name: min_forecast_gco2_kwh
+        description: Lowest half-hourly forecast intensity of the day, gCO2/kWh.
+      - name: max_forecast_gco2_kwh
+        description: Highest half-hourly forecast intensity of the day, gCO2/kWh.
+      - name: cleanest_period_start
+        description: Start (UTC) of the half hour with the lowest forecast intensity.
+      - name: dirtiest_period_start
+        description: Start (UTC) of the half hour with the highest forecast intensity.
       - name: mean_renewable_pct
+        description: Mean renewable share over the day, %.
         tests:
           - value_between: { min_value: 0, max_value: 100 }
+      - name: mean_low_carbon_pct
+        description: Mean low-carbon share over the day, %.
+      - name: mean_fossil_pct
+        description: Mean fossil share over the day, %.
+      - name: mean_wind_pct
+        description: Mean wind share over the day, %.
+      - name: mean_solar_pct
+        description: Mean solar share over the day, %.
+      - name: mean_gas_pct
+        description: Mean gas share over the day, %.
+      - name: mean_nuclear_pct
+        description: Mean nuclear share over the day, %.
+      - name: mean_imports_pct
+        description: Mean imports share over the day, %.
+      - name: mean_temperature_c
+        description: Mean temperature at the region's point, degrees C. Null for aggregate regions.
+      - name: mean_wind_speed_100m_ms
+        description: Mean 100 m wind speed at the region's point, m/s. Null for aggregate regions.
+      - name: max_wind_speed_100m_ms
+        description: Highest half-hourly 100 m wind speed of the day, m/s.
+      - name: mean_shortwave_radiation_wm2
+        description: Mean solar radiation at the region's point, W/m2.
+      - name: mean_cloud_cover_pct
+        description: Mean cloud cover at the region's point, %.
+      - name: total_precipitation_mm
+        description: Total precipitation over the day, mm.
+      - name: last_fetched_at
+        description: Latest fetch time (UTC) among the day's rows.
 
   - name: agg_forecast_accuracy_by_settlement_period
+    description: GB-wide day-ahead forecast accuracy by settlement period across the whole history. Answers "when in the day is the forecast least reliable?"
     columns:
       - name: settlement_period
+        description: Half-hour number within the UTC day, 1-48.
         tests: [unique, not_null]
+      - name: hour_of_day
+        description: UTC hour the settlement period falls in, 0-23.
+      - name: periods
+        description: Number of half hours with an actual intensity that went into the averages.
+      - name: mae_gco2_kwh
+        description: Mean absolute forecast error, gCO2/kWh.
+      - name: bias_gco2_kwh
+        description: Mean signed error (forecast minus actual), gCO2/kWh. Positive means the forecast ran high.
+      - name: mape_pct
+        description: Mean absolute error as a percentage of the actual, %.
+      - name: rmse_gco2_kwh
+        description: Root mean squared error, gCO2/kWh.
+      - name: median_abs_error_gco2_kwh
+        description: Median absolute error, gCO2/kWh.
+      - name: p90_abs_error_gco2_kwh
+        description: 90th percentile absolute error, gCO2/kWh. A typical bad miss.
+      - name: mean_actual_gco2_kwh
+        description: Mean actual intensity in this settlement period, gCO2/kWh.
 
   - name: agg_hour_of_day_regional
+    description: Mean forecast intensity and generation mix by region and UTC hour of day across the whole history, with each hour ranked from cleanest to dirtiest within its region. Answers "when is electricity cleanest in my region?"
     columns:
+      - name: region_id
+        description: Region id. Joins to dim_region.
+      - name: region_name
+        description: Region name.
+      - name: nation
+        description: England, Scotland, Wales or GB.
+      - name: is_aggregate
+        description: True for regions 15-18.
       - name: hour_of_day_utc
+        description: UTC hour of day, 0-23. UK clock time is one hour ahead during British Summer Time.
         tests:
           - value_between: { min_value: 0, max_value: 23 }
+      - name: periods
+        description: Number of half hours averaged.
+      - name: mean_forecast_gco2_kwh
+        description: Mean forecast intensity for the region in this hour, gCO2/kWh.
+      - name: mean_renewable_pct
+        description: Mean renewable share, %.
+      - name: mean_low_carbon_pct
+        description: Mean low-carbon share, %.
+      - name: mean_fossil_pct
+        description: Mean fossil share, %.
+      - name: mean_wind_pct
+        description: Mean wind share, %.
+      - name: mean_solar_pct
+        description: Mean solar share, %.
       - name: cleanliness_rank
+        description: Rank of the hour within its region by mean forecast intensity. 1 = the cleanest hour.
         tests:
           - value_between: { min_value: 1, max_value: 24 }
 
   - name: agg_wind_speed_bins_regional
-    columns:
-      - name: mean_wind_pct
-        tests:
-          - value_between: { min_value: 0, max_value: 100 }
-
-  - name: agg_weather_intensity_correlation
+    description: How the wind share and carbon intensity respond to 100 m wind speed, in 2 m/s bins, for each of the 14 DNO regions across the whole history.
     columns:
       - name: region_id
-        tests: [unique, not_null]
-      - name: corr_wind_speed_vs_wind_pct
-        tests:
-          - value_between: { min_value: -1, max_value: 1 }
-
-  - name: data_quality_daily
-    columns:
-      - name: dataset
-        tests: [not_null]
-      - name: quarantine_rate_pct
+        description: Region id (1-14 only).
+      - name: region_name
+        description: Region name.
+      - name: wind_speed_bin_floor_ms
+        description: Lower edge of the wind speed bin, m/s (0, 2, 4, ... 20). 20 covers everything at 20 m/s and above.
+      - name: wind_speed_bin_label
+        description: Readable bin label, e.g. "6-8" or "20+".
+      - name: periods
+        description: Number of half hours in the bin.
+      - name: mean_wind_pct
+        description: Mean wind share in the bin, %.
         tests:
           - value_between: { min_value: 0, max_value: 100 }
+      - name: mean_renewable_pct
+        description: Mean renewable share in the bin, %.
+      - name: mean_forecast_gco2_kwh
+        description: Mean forecast intensity in the bin, gCO2/kWh.
+
+  - name: agg_weather_intensity_correlation
+    description: Pearson correlations between the weather at each DNO region's point and its generation mix and forecast intensity, across the whole history. Answers "how much does wind or sun explain the grid in this region?"
+    columns:
+      - name: region_id
+        description: Region id (1-14 only).
+        tests: [unique, not_null]
+      - name: region_name
+        description: Region name.
+      - name: nation
+        description: England, Scotland or Wales.
+      - name: periods
+        description: Number of half hours used.
+      - name: first_day
+        description: First UTC day in the window.
+      - name: last_day
+        description: Last UTC day in the window.
+      - name: corr_wind_speed_vs_wind_pct
+        description: Correlation (-1 to 1) of 100 m wind speed with the wind share. Null when either side never varied.
+        tests:
+          - value_between: { min_value: -1, max_value: 1 }
+      - name: corr_wind_speed_vs_intensity
+        description: Correlation of 100 m wind speed with forecast intensity. Negative means windier periods are cleaner.
+      - name: corr_radiation_vs_solar_pct
+        description: Correlation of solar radiation with the solar share.
+      - name: corr_radiation_vs_intensity
+        description: Correlation of solar radiation with forecast intensity. Negative means sunnier periods are cleaner.
+      - name: corr_temperature_vs_intensity
+        description: Correlation of temperature with forecast intensity.
+      - name: corr_renewable_pct_vs_intensity
+        description: Correlation of the renewable share with forecast intensity.
+
+  - name: data_quality_daily
+    description: Pipeline health per UTC partition day and dataset. The latest extract and transform run, how many rows came in, went out and were quarantined, and whether the national day is complete.
+    columns:
+      - name: date_day
+        description: The partition's UTC day.
+      - name: dataset
+        description: national_intensity, national_generation, regional_intensity, weather_hourly or carbon_factors.
+        tests: [not_null]
+      - name: extract_status
+        description: Status of the latest extract run, e.g. succeeded or skipped (already fetched).
+      - name: transform_status
+        description: Status of the latest transform run.
+      - name: rows_in
+        description: Rows read by the transform.
+      - name: rows_out
+        description: Rows written to silver.
+      - name: rows_quarantined
+        description: Rows rejected by the data contracts and quarantined.
+      - name: quarantine_rate_pct
+        description: rows_quarantined as a percentage of rows_in.
+        tests:
+          - value_between: { min_value: 0, max_value: 100 }
+      - name: transform_duration_ms
+        description: How long the transform took, milliseconds.
+      - name: extract_duration_ms
+        description: How long the extract took, milliseconds.
+      - name: transform_finished_at
+        description: When the latest transform finished (UTC).
+      - name: national_periods
+        description: Number of national half hours in the marts for the day.
+      - name: national_day_complete
+        description: True when the national fact has all 48 periods for the day.
